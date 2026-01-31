@@ -284,6 +284,397 @@ tr:hover {
     white-space: nowrap;
 }
 
+/* Action buttons in table */
+.actions {
+    white-space: nowrap;
+}
+
+.action-btn {
+    display: inline-block;
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    text-decoration: none;
+    border-radius: 6px;
+    transition: all 0.2s;
+    margin-right: 6px;
+}
+
+.view-btn {
+    background: var(--accent-color);
+    color: var(--bg-primary);
+}
+
+.view-btn:hover {
+    background: var(--accent-hover);
+}
+
+.github-btn {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+
+.github-btn:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+/* Detail page header */
+.detail-header {
+    text-align: left;
+    position: relative;
+}
+
+.detail-header h1 {
+    font-size: 1.8rem;
+}
+
+.back-link {
+    display: inline-block;
+    color: var(--accent-color);
+    text-decoration: none;
+    font-size: 0.95rem;
+    margin-bottom: 10px;
+}
+
+.back-link:hover {
+    text-decoration: underline;
+}
+
+/* Repository detail */
+.repo-detail {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 24px;
+}
+
+.repo-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 20px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 24px;
+}
+
+.repo-avatar {
+    width: 80px;
+    height: 80px;
+    border-radius: 12px;
+    flex-shrink: 0;
+}
+
+.repo-header-info {
+    flex: 1;
+}
+
+.repo-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+}
+
+.repo-desc {
+    color: var(--text-secondary);
+    font-size: 1rem;
+    margin-bottom: 12px;
+    line-height: 1.5;
+}
+
+.repo-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.owner-link {
+    color: var(--accent-color);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.owner-link:hover {
+    text-decoration: underline;
+}
+
+.badge {
+    display: inline-block;
+    padding: 3px 10px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 12px;
+    text-transform: uppercase;
+}
+
+.fork-badge {
+    background: rgba(163, 113, 247, 0.2);
+    color: #a371f7;
+    border: 1px solid rgba(163, 113, 247, 0.4);
+}
+
+.archived-badge {
+    background: rgba(210, 153, 34, 0.2);
+    color: var(--warning-color);
+    border: 1px solid rgba(210, 153, 34, 0.4);
+}
+
+.github-link {
+    display: inline-block;
+    padding: 10px 20px;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    text-decoration: none;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.github-link:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+/* Stats grid */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.stat-card {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+}
+
+.stat-value {
+    display: block;
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.stat-label {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Detail sections */
+.detail-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.detail-section {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 20px;
+}
+
+.detail-section h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+/* Info grid */
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+}
+
+.info-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.info-label {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.info-value {
+    font-size: 1rem;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+/* Topics */
+.topics-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.topic-badge {
+    display: inline-block;
+    padding: 6px 14px;
+    background: rgba(88, 166, 255, 0.15);
+    color: var(--accent-color);
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+/* Contributors */
+.contributors-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+}
+
+.contributor {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    text-decoration: none;
+    transition: all 0.2s;
+}
+
+.contributor:hover {
+    border-color: var(--accent-color);
+}
+
+.contributor-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+}
+
+.contributor-name {
+    color: var(--text-primary);
+    font-weight: 500;
+    font-size: 0.9rem;
+}
+
+.contributor-commits {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    margin-left: auto;
+}
+
+/* README section */
+.readme-section {
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+.readme-content {
+    color: var(--text-primary);
+    line-height: 1.7;
+}
+
+.readme-content h1,
+.readme-content h2,
+.readme-content h3,
+.readme-content h4 {
+    color: var(--text-primary);
+    margin-top: 24px;
+    margin-bottom: 16px;
+}
+
+.readme-content h1 {
+    font-size: 1.5rem;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.readme-content h2 {
+    font-size: 1.3rem;
+}
+
+.readme-content p {
+    margin-bottom: 16px;
+}
+
+.readme-content a {
+    color: var(--accent-color);
+}
+
+.readme-content code {
+    background: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+.readme-content pre {
+    background: var(--bg-tertiary);
+    padding: 16px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin-bottom: 16px;
+}
+
+.readme-content pre code {
+    background: none;
+    padding: 0;
+}
+
+.readme-content ul,
+.readme-content ol {
+    margin-bottom: 16px;
+    padding-left: 24px;
+}
+
+.readme-content li {
+    margin-bottom: 8px;
+}
+
+.readme-content img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+}
+
+.readme-content blockquote {
+    border-left: 4px solid var(--accent-color);
+    padding-left: 16px;
+    margin: 16px 0;
+    color: var(--text-secondary);
+}
+
+.readme-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 16px;
+}
+
+.readme-content th,
+.readme-content td {
+    padding: 8px 12px;
+    border: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.readme-content th {
+    background: var(--bg-tertiary);
+}
+
 footer {
     text-align: center;
     padding: 30px 20px;
@@ -329,5 +720,47 @@ footer {
 
     .search-box button {
         width: 100%;
+    }
+
+    .repo-header {
+        flex-direction: column;
+        text-align: center;
+    }
+
+    .repo-avatar {
+        margin: 0 auto;
+    }
+
+    .repo-meta {
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    .github-link {
+        width: 100%;
+        text-align: center;
+    }
+
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .info-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .contributors-list {
+        grid-template-columns: 1fr;
+    }
+
+    .actions {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .action-btn {
+        margin-right: 0;
+        text-align: center;
     }
 }
