@@ -31,6 +31,19 @@ pub struct SearchResponse {
     pub items: Vec<Repository>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct RateLimitInfo {
+    pub limit: u32,
+    pub remaining: u32,
+    pub reset_timestamp: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct SearchResult {
+    pub response: SearchResponse,
+    pub rate_limit: Option<RateLimitInfo>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SortBy {
     Stars,
@@ -67,6 +80,9 @@ impl SortOrder {
     }
 }
 
+// Results per page options
+pub const PER_PAGE_OPTIONS: &[u32] = &[10, 30, 50, 100];
+
 // Popular programming languages for the filter
 pub const LANGUAGES: &[&str] = &[
     "All",
@@ -101,7 +117,9 @@ async fn search_repositories(
     language: String,
     sort_by: SortBy,
     sort_order: SortOrder,
-) -> Result<SearchResponse, String> {
+    page: u32,
+    per_page: u32,
+) -> Result<SearchResult, String> {
     let mut search_query = if query.is_empty() {
         "stars:>100".to_string()
     } else {
@@ -113,10 +131,12 @@ async fn search_repositories(
     }
 
     let url = format!(
-        "https://api.github.com/search/repositories?q={}&sort={}&order={}&per_page=30",
+        "https://api.github.com/search/repositories?q={}&sort={}&order={}&per_page={}&page={}",
         urlencoding(&search_query),
         sort_by.as_str(),
-        sort_order.as_str()
+        sort_order.as_str(),
+        per_page,
+        page
     );
 
     let response = reqwasm::http::Request::get(&url)
@@ -126,18 +146,77 @@ async fn search_repositories(
         .await
         .map_err(|e| format!("Request failed: {:?}", e))?;
 
+    // Extract rate limit headers
+    let rate_limit = extract_rate_limit_info(&response);
+
     if response.status() == 403 {
+        if let Some(ref rl) = rate_limit {
+            if rl.remaining == 0 {
+                let reset_time = format_reset_time(rl.reset_timestamp);
+                return Err(format!(
+                    "Rate limit exceeded. Resets at {}. Try again later.",
+                    reset_time
+                ));
+            }
+        }
         return Err("Rate limit exceeded. Please try again later.".to_string());
+    }
+
+    if response.status() == 422 {
+        return Err("Search query too complex or invalid. Try simplifying your search.".to_string());
     }
 
     if !response.ok() {
         return Err(format!("GitHub API error: {}", response.status()));
     }
 
-    response
+    let search_response = response
         .json::<SearchResponse>()
         .await
-        .map_err(|e| format!("Failed to parse response: {:?}", e))
+        .map_err(|e| format!("Failed to parse response: {:?}", e))?;
+
+    Ok(SearchResult {
+        response: search_response,
+        rate_limit,
+    })
+}
+
+fn extract_rate_limit_info(response: &reqwasm::http::Response) -> Option<RateLimitInfo> {
+    let limit = response
+        .headers()
+        .get("x-ratelimit-limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let remaining = response
+        .headers()
+        .get("x-ratelimit-remaining")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let reset_timestamp = response
+        .headers()
+        .get("x-ratelimit-reset")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    if limit > 0 {
+        Some(RateLimitInfo {
+            limit,
+            remaining,
+            reset_timestamp,
+        })
+    } else {
+        None
+    }
+}
+
+fn format_reset_time(timestamp: u64) -> String {
+    // Convert Unix timestamp to a readable format
+    // Since we're in WASM, we'll use JS Date via web-sys
+    use wasm_bindgen::JsValue;
+    let date = js_sys::Date::new(&JsValue::from_f64(timestamp as f64 * 1000.0));
+    let hours = date.get_hours();
+    let minutes = date.get_minutes();
+    format!("{:02}:{:02}", hours, minutes)
 }
 
 fn urlencoding(s: &str) -> String {
@@ -178,6 +257,12 @@ fn format_number(n: u32) -> String {
     }
 }
 
+fn calculate_total_pages(total_count: u32, per_page: u32) -> u32 {
+    // GitHub API limits to 1000 results max
+    let effective_total = total_count.min(1000);
+    (effective_total + per_page - 1) / per_page
+}
+
 #[component]
 pub fn App() -> impl IntoView {
     let (query, set_query) = signal(String::new());
@@ -188,21 +273,31 @@ pub fn App() -> impl IntoView {
     let (loading, set_loading) = signal(false);
     let (error, set_error) = signal(Option::<String>::None);
     let (total_count, set_total_count) = signal(0u32);
+    let (current_page, set_current_page) = signal(1u32);
+    let (per_page, set_per_page) = signal(30u32);
+    let (rate_limit, set_rate_limit) = signal(Option::<RateLimitInfo>::None);
+    let (incomplete_results, set_incomplete_results) = signal(false);
 
-    let do_search = move || {
+    let total_pages = move || calculate_total_pages(total_count.get(), per_page.get());
+
+    let do_search = move |page: u32| {
         let q = query.get();
         let lang = language.get();
         let sort = sort_by.get();
         let order = sort_order.get();
+        let pp = per_page.get();
 
         set_loading.set(true);
         set_error.set(None);
+        set_current_page.set(page);
 
         leptos::task::spawn_local(async move {
-            match search_repositories(q, lang, sort, order).await {
-                Ok(response) => {
-                    set_total_count.set(response.total_count);
-                    set_repositories.set(response.items);
+            match search_repositories(q, lang, sort, order, page, pp).await {
+                Ok(result) => {
+                    set_total_count.set(result.response.total_count);
+                    set_repositories.set(result.response.items);
+                    set_rate_limit.set(result.rate_limit);
+                    set_incomplete_results.set(result.response.incomplete_results);
                 }
                 Err(e) => {
                     set_error.set(Some(e));
@@ -212,11 +307,39 @@ pub fn App() -> impl IntoView {
         });
     };
 
+    let go_to_page = move |page: u32| {
+        if page >= 1 && page <= total_pages() && !loading.get() {
+            do_search(page);
+        }
+    };
+
+    let go_prev = move |_| {
+        let page = current_page.get();
+        if page > 1 {
+            go_to_page(page - 1);
+        }
+    };
+
+    let go_next = move |_| {
+        let page = current_page.get();
+        if page < total_pages() {
+            go_to_page(page + 1);
+        }
+    };
+
+    let go_first = move |_| {
+        go_to_page(1);
+    };
+
+    let go_last = move |_| {
+        go_to_page(total_pages());
+    };
+
     // Initial search on load
     {
         let do_search = do_search.clone();
         Effect::new(move |_| {
-            do_search();
+            do_search(1);
         });
     }
 
@@ -238,11 +361,11 @@ pub fn App() -> impl IntoView {
                         }
                         on:keydown=move |ev| {
                             if ev.key() == "Enter" {
-                                do_search();
+                                do_search(1);
                             }
                         }
                     />
-                    <button on:click=move |_| do_search() disabled=move || loading.get()>
+                    <button on:click=move |_| do_search(1) disabled=move || loading.get()>
                         {move || if loading.get() { "Searching..." } else { "Search" }}
                     </button>
                 </div>
@@ -252,7 +375,7 @@ pub fn App() -> impl IntoView {
                         <label>"Language:"</label>
                         <select on:change=move |ev| {
                             set_language.set(event_target_value(&ev));
-                            do_search();
+                            do_search(1);
                         }>
                             {LANGUAGES.iter().map(|lang| {
                                 view! {
@@ -276,7 +399,7 @@ pub fn App() -> impl IntoView {
                                 "updated" => SortBy::Updated,
                                 _ => SortBy::Stars,
                             });
-                            do_search();
+                            do_search(1);
                         }>
                             <option value="stars" selected=move || sort_by.get() == SortBy::Stars>"Stars"</option>
                             <option value="forks" selected=move || sort_by.get() == SortBy::Forks>"Forks"</option>
@@ -291,14 +414,52 @@ pub fn App() -> impl IntoView {
                         <select on:change=move |ev| {
                             let value = event_target_value(&ev);
                             set_sort_order.set(if value == "asc" { SortOrder::Asc } else { SortOrder::Desc });
-                            do_search();
+                            do_search(1);
                         }>
                             <option value="desc" selected=move || sort_order.get() == SortOrder::Desc>"Descending"</option>
                             <option value="asc" selected=move || sort_order.get() == SortOrder::Asc>"Ascending"</option>
                         </select>
                     </div>
+
+                    <div class="filter-group">
+                        <label>"Per page:"</label>
+                        <select on:change=move |ev| {
+                            let value: u32 = event_target_value(&ev).parse().unwrap_or(30);
+                            set_per_page.set(value);
+                            do_search(1);
+                        }>
+                            {PER_PAGE_OPTIONS.iter().map(|&n| {
+                                view! {
+                                    <option value=n.to_string() selected=move || per_page.get() == n>
+                                        {n.to_string()}
+                                    </option>
+                                }
+                            }).collect::<Vec<_>>()}
+                        </select>
+                    </div>
                 </div>
             </div>
+
+            // Rate limit indicator
+            {move || rate_limit.get().map(|rl| {
+                let percentage = (rl.remaining as f64 / rl.limit as f64) * 100.0;
+                let status_class = if percentage > 50.0 {
+                    "rate-limit-ok"
+                } else if percentage > 20.0 {
+                    "rate-limit-warning"
+                } else {
+                    "rate-limit-danger"
+                };
+                view! {
+                    <div class=format!("rate-limit-info {}", status_class)>
+                        <span class="rate-limit-label">"API Rate Limit: "</span>
+                        <span class="rate-limit-value">{rl.remaining}" / "{rl.limit}</span>
+                        {(rl.remaining < 10).then(|| view! {
+                            <span class="rate-limit-reset">" (resets at "{format_reset_time(rl.reset_timestamp)}")"</span>
+                        })}
+                    </div>
+                }
+            })}
 
             {move || error.get().map(|e| view! {
                 <div class="error">
@@ -306,9 +467,26 @@ pub fn App() -> impl IntoView {
                 </div>
             })}
 
+            {move || incomplete_results.get().then(|| view! {
+                <div class="warning">
+                    <strong>"Warning: "</strong>"Results may be incomplete due to GitHub API timeout. Try a more specific search."
+                </div>
+            })}
+
             <div class="results-header">
                 <span class="count">
-                    {move || format!("{} repositories found", format_number(total_count.get()))}
+                    {move || {
+                        let total = total_count.get();
+                        let effective_total = total.min(1000);
+                        if total > 1000 {
+                            format!("{} repositories found (showing first 1,000)", format_number(total))
+                        } else {
+                            format!("{} repositories found", format_number(total))
+                        }
+                    }}
+                </span>
+                <span class="page-info">
+                    {move || format!("Page {} of {}", current_page.get(), total_pages().max(1))}
                 </span>
             </div>
 
@@ -370,6 +548,69 @@ pub fn App() -> impl IntoView {
                     }
                 }}
             </div>
+
+            // Pagination controls
+            {move || (total_pages() > 1).then(|| {
+                let page = current_page.get();
+                let pages = total_pages();
+                view! {
+                    <div class="pagination">
+                        <button
+                            class="page-btn"
+                            on:click=go_first
+                            disabled=move || page == 1 || loading.get()
+                        >
+                            "First"
+                        </button>
+                        <button
+                            class="page-btn"
+                            on:click=go_prev
+                            disabled=move || page == 1 || loading.get()
+                        >
+                            "Prev"
+                        </button>
+
+                        <div class="page-numbers">
+                            {(1..=pages).filter(move |&p| {
+                                // Show first, last, current, and 2 pages around current
+                                p == 1 || p == pages || (p >= page.saturating_sub(2) && p <= page + 2)
+                            }).map(|p| {
+                                let show_ellipsis_before = p > 1 && p > page.saturating_sub(2) && p != 2;
+                                let show_ellipsis_after = p < pages && p < page + 2 && p != pages - 1;
+                                view! {
+                                    <>
+                                        {show_ellipsis_before.then(|| view! { <span class="ellipsis">"..."</span> })}
+                                        <button
+                                            class="page-num"
+                                            class:active=move || current_page.get() == p
+                                            on:click=move |_| go_to_page(p)
+                                            disabled=move || loading.get()
+                                        >
+                                            {p}
+                                        </button>
+                                        {show_ellipsis_after.then(|| view! { <span class="ellipsis">"..."</span> })}
+                                    </>
+                                }
+                            }).collect::<Vec<_>>()}
+                        </div>
+
+                        <button
+                            class="page-btn"
+                            on:click=go_next
+                            disabled=move || page == pages || loading.get()
+                        >
+                            "Next"
+                        </button>
+                        <button
+                            class="page-btn"
+                            on:click=go_last
+                            disabled=move || page == pages || loading.get()
+                        >
+                            "Last"
+                        </button>
+                    </div>
+                }
+            })}
 
             <footer>
                 <p>"Powered by the GitHub API | Built with Rust + Leptos"</p>
