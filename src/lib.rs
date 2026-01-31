@@ -16,6 +16,11 @@ pub struct Repository {
     pub created_at: String,
     pub updated_at: String,
     pub owner: Owner,
+    #[serde(default)]
+    pub fork: bool,
+    #[serde(default)]
+    pub archived: bool,
+    pub topics: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -67,6 +72,31 @@ impl SortOrder {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ForkFilter {
+    All,
+    OriginalOnly,
+    ForksOnly,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ArchivedFilter {
+    All,
+    ActiveOnly,
+    ArchivedOnly,
+}
+
+// Star range presets for the filter
+pub const STAR_RANGES: &[(&str, &str)] = &[
+    ("Any", ""),
+    ("1+", ">=1"),
+    ("10+", ">=10"),
+    ("100+", ">=100"),
+    ("1K+", ">=1000"),
+    ("10K+", ">=10000"),
+    ("100K+", ">=100000"),
+];
+
 // Popular programming languages for the filter
 pub const LANGUAGES: &[&str] = &[
     "All",
@@ -94,29 +124,93 @@ pub const LANGUAGES: &[&str] = &[
     "Zig",
     "Nim",
     "OCaml",
+    "Shell",
+    "Vue",
+    "HTML",
+    "CSS",
+    "Markdown",
 ];
 
-async fn search_repositories(
-    query: String,
-    language: String,
-    sort_by: SortBy,
-    sort_order: SortOrder,
-) -> Result<SearchResponse, String> {
-    let mut search_query = if query.is_empty() {
-        "stars:>100".to_string()
-    } else {
-        query
-    };
+#[derive(Clone, Debug, Default)]
+pub struct SearchFilters {
+    pub query: String,
+    pub language: String,
+    pub min_stars: String,
+    pub fork_filter: ForkFilter,
+    pub archived_filter: ArchivedFilter,
+    pub sort_by: SortBy,
+    pub sort_order: SortOrder,
+}
 
-    if language != "All" && !language.is_empty() {
-        search_query = format!("{} language:{}", search_query, language);
+impl Default for ForkFilter {
+    fn default() -> Self {
+        ForkFilter::All
     }
+}
+
+impl Default for ArchivedFilter {
+    fn default() -> Self {
+        ArchivedFilter::ActiveOnly
+    }
+}
+
+impl Default for SortBy {
+    fn default() -> Self {
+        SortBy::Stars
+    }
+}
+
+impl Default for SortOrder {
+    fn default() -> Self {
+        SortOrder::Desc
+    }
+}
+
+fn build_search_query(filters: &SearchFilters) -> String {
+    let mut parts = Vec::new();
+
+    // Add user query or default
+    if filters.query.is_empty() {
+        parts.push("stars:>100".to_string());
+    } else {
+        parts.push(filters.query.clone());
+    }
+
+    // Add language filter
+    if filters.language != "All" && !filters.language.is_empty() {
+        parts.push(format!("language:{}", filters.language));
+    }
+
+    // Add star filter
+    if !filters.min_stars.is_empty() {
+        parts.push(format!("stars:{}", filters.min_stars));
+    }
+
+    // Add fork filter
+    match filters.fork_filter {
+        ForkFilter::All => {}
+        ForkFilter::OriginalOnly => parts.push("fork:false".to_string()),
+        ForkFilter::ForksOnly => parts.push("fork:true".to_string()),
+    }
+
+    // Add archived filter
+    match filters.archived_filter {
+        ArchivedFilter::All => {}
+        ArchivedFilter::ActiveOnly => parts.push("archived:false".to_string()),
+        ArchivedFilter::ArchivedOnly => parts.push("archived:true".to_string()),
+    }
+
+    parts.join(" ")
+}
+
+async fn search_repositories(filters: SearchFilters) -> Result<SearchResponse, String> {
+    let search_query = build_search_query(&filters);
 
     let url = format!(
         "https://api.github.com/search/repositories?q={}&sort={}&order={}&per_page=30",
         urlencoding(&search_query),
-        sort_by.as_str(),
-        sort_order.as_str()
+        filters.sort_by.as_str(),
+        filters.sort_order.as_str()
     );
 
     let response = reqwasm::http::Request::get(&url)
@@ -149,6 +243,7 @@ fn urlencoding(s: &str) -> String {
             ':' => result.push_str("%3A"),
             '>' => result.push_str("%3E"),
             '<' => result.push_str("%3C"),
+            '=' => result.push_str("%3D"),
             _ => {
                 for byte in c.to_string().as_bytes() {
                     result.push_str(&format!("%{:02X}", byte));
@@ -182,24 +277,33 @@ fn format_number(n: u32) -> String {
 pub fn App() -> impl IntoView {
     let (query, set_query) = signal(String::new());
     let (language, set_language) = signal("All".to_string());
+    let (min_stars, set_min_stars) = signal(String::new());
+    let (fork_filter, set_fork_filter) = signal(ForkFilter::All);
+    let (archived_filter, set_archived_filter) = signal(ArchivedFilter::ActiveOnly);
     let (sort_by, set_sort_by) = signal(SortBy::Stars);
     let (sort_order, set_sort_order) = signal(SortOrder::Desc);
     let (repositories, set_repositories) = signal(Vec::<Repository>::new());
     let (loading, set_loading) = signal(false);
     let (error, set_error) = signal(Option::<String>::None);
     let (total_count, set_total_count) = signal(0u32);
+    let (show_advanced, set_show_advanced) = signal(false);
 
     let do_search = move || {
-        let q = query.get();
-        let lang = language.get();
-        let sort = sort_by.get();
-        let order = sort_order.get();
+        let filters = SearchFilters {
+            query: query.get(),
+            language: language.get(),
+            min_stars: min_stars.get(),
+            fork_filter: fork_filter.get(),
+            archived_filter: archived_filter.get(),
+            sort_by: sort_by.get(),
+            sort_order: sort_order.get(),
+        };
 
         set_loading.set(true);
         set_error.set(None);
 
         leptos::task::spawn_local(async move {
-            match search_repositories(q, lang, sort, order).await {
+            match search_repositories(filters).await {
                 Ok(response) => {
                     set_total_count.set(response.total_count);
                     set_repositories.set(response.items);
@@ -210,6 +314,17 @@ pub fn App() -> impl IntoView {
             }
             set_loading.set(false);
         });
+    };
+
+    let clear_filters = move |_| {
+        set_query.set(String::new());
+        set_language.set("All".to_string());
+        set_min_stars.set(String::new());
+        set_fork_filter.set(ForkFilter::All);
+        set_archived_filter.set(ArchivedFilter::ActiveOnly);
+        set_sort_by.set(SortBy::Stars);
+        set_sort_order.set(SortOrder::Desc);
+        do_search();
     };
 
     // Initial search on load
@@ -265,6 +380,22 @@ pub fn App() -> impl IntoView {
                     </div>
 
                     <div class="filter-group">
+                        <label>"Min Stars:"</label>
+                        <select on:change=move |ev| {
+                            set_min_stars.set(event_target_value(&ev));
+                            do_search();
+                        }>
+                            {STAR_RANGES.iter().map(|(label, value)| {
+                                view! {
+                                    <option value=*value selected=move || min_stars.get() == *value>
+                                        {*label}
+                                    </option>
+                                }
+                            }).collect::<Vec<_>>()}
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
                         <label>"Sort by:"</label>
                         <select on:change=move |ev| {
                             let value = event_target_value(&ev);
@@ -298,6 +429,53 @@ pub fn App() -> impl IntoView {
                         </select>
                     </div>
                 </div>
+
+                <div class="advanced-toggle">
+                    <button class="toggle-btn" on:click=move |_| set_show_advanced.update(|v| *v = !*v)>
+                        {move || if show_advanced.get() { "Hide Advanced Filters" } else { "Show Advanced Filters" }}
+                    </button>
+                    <button class="clear-btn" on:click=clear_filters>
+                        "Clear All Filters"
+                    </button>
+                </div>
+
+                {move || show_advanced.get().then(|| view! {
+                    <div class="advanced-filters">
+                        <div class="filter-group">
+                            <label>"Repository Type:"</label>
+                            <select on:change=move |ev| {
+                                let value = event_target_value(&ev);
+                                set_fork_filter.set(match value.as_str() {
+                                    "original" => ForkFilter::OriginalOnly,
+                                    "forks" => ForkFilter::ForksOnly,
+                                    _ => ForkFilter::All,
+                                });
+                                do_search();
+                            }>
+                                <option value="all" selected=move || fork_filter.get() == ForkFilter::All>"All Repos"</option>
+                                <option value="original" selected=move || fork_filter.get() == ForkFilter::OriginalOnly>"Original Only"</option>
+                                <option value="forks" selected=move || fork_filter.get() == ForkFilter::ForksOnly>"Forks Only"</option>
+                            </select>
+                        </div>
+
+                        <div class="filter-group">
+                            <label>"Status:"</label>
+                            <select on:change=move |ev| {
+                                let value = event_target_value(&ev);
+                                set_archived_filter.set(match value.as_str() {
+                                    "active" => ArchivedFilter::ActiveOnly,
+                                    "archived" => ArchivedFilter::ArchivedOnly,
+                                    _ => ArchivedFilter::All,
+                                });
+                                do_search();
+                            }>
+                                <option value="active" selected=move || archived_filter.get() == ArchivedFilter::ActiveOnly>"Active Only"</option>
+                                <option value="all" selected=move || archived_filter.get() == ArchivedFilter::All>"All (incl. Archived)"</option>
+                                <option value="archived" selected=move || archived_filter.get() == ArchivedFilter::ArchivedOnly>"Archived Only"</option>
+                            </select>
+                        </div>
+                    </div>
+                })}
             </div>
 
             {move || error.get().map(|e| view! {
@@ -342,16 +520,22 @@ pub fn App() -> impl IntoView {
                                         let issues = format_number(repo.open_issues_count);
                                         let created = format_date(&repo.created_at);
                                         let avatar = repo.owner.avatar_url.clone();
+                                        let is_fork = repo.fork;
+                                        let is_archived = repo.archived;
 
                                         view! {
-                                            <tr>
+                                            <tr class:archived=is_archived class:forked=is_fork>
                                                 <td class="repo-cell">
                                                     <div class="repo-info">
                                                         <img src=avatar alt="avatar" class="avatar" />
                                                         <div class="repo-details">
-                                                            <a href=repo_url target="_blank" class="repo-name">
-                                                                {repo_name}
-                                                            </a>
+                                                            <div class="repo-name-row">
+                                                                <a href=repo_url target="_blank" class="repo-name">
+                                                                    {repo_name}
+                                                                </a>
+                                                                {is_fork.then(|| view! { <span class="badge fork-badge">"Fork"</span> })}
+                                                                {is_archived.then(|| view! { <span class="badge archived-badge">"Archived"</span> })}
+                                                            </div>
                                                             <p class="repo-description">{description}</p>
                                                         </div>
                                                     </div>
