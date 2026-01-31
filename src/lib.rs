@@ -1,4 +1,7 @@
 use leptos::prelude::*;
+use leptos_router::components::{Route, Router, Routes, A};
+use leptos_router::path;
+use leptos_router::hooks::use_params_map;
 use serde::{Deserialize, Serialize};
 
 // GitHub API response structures
@@ -16,12 +19,34 @@ pub struct Repository {
     pub created_at: String,
     pub updated_at: String,
     pub owner: Owner,
+    pub topics: Option<Vec<String>>,
+    pub license: Option<License>,
+    pub default_branch: Option<String>,
+    pub watchers_count: Option<u32>,
+    pub subscribers_count: Option<u32>,
+    pub size: Option<u32>,
+    #[serde(default)]
+    pub fork: bool,
+    #[serde(default)]
+    pub archived: bool,
+    #[serde(default)]
+    pub has_wiki: bool,
+    #[serde(default)]
+    pub has_issues: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Owner {
     pub login: String,
     pub avatar_url: String,
+    pub html_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct License {
+    pub key: String,
+    pub name: String,
+    pub spdx_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -29,6 +54,14 @@ pub struct SearchResponse {
     pub total_count: u32,
     pub incomplete_results: bool,
     pub items: Vec<Repository>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Contributor {
+    pub login: String,
+    pub avatar_url: String,
+    pub html_url: String,
+    pub contributions: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -140,6 +173,80 @@ async fn search_repositories(
         .map_err(|e| format!("Failed to parse response: {:?}", e))
 }
 
+async fn fetch_repository(owner: &str, repo: &str) -> Result<Repository, String> {
+    let url = format!("https://api.github.com/repos/{}/{}", owner, repo);
+
+    let response = reqwasm::http::Request::get(&url)
+        .header("Accept", "application/vnd.github.v3+json")
+        .header("User-Agent", "oss-explorer")
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {:?}", e))?;
+
+    if response.status() == 404 {
+        return Err("Repository not found.".to_string());
+    }
+
+    if response.status() == 403 {
+        return Err("Rate limit exceeded. Please try again later.".to_string());
+    }
+
+    if !response.ok() {
+        return Err(format!("GitHub API error: {}", response.status()));
+    }
+
+    response
+        .json::<Repository>()
+        .await
+        .map_err(|e| format!("Failed to parse response: {:?}", e))
+}
+
+async fn fetch_contributors(owner: &str, repo: &str) -> Result<Vec<Contributor>, String> {
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/contributors?per_page=10",
+        owner, repo
+    );
+
+    let response = reqwasm::http::Request::get(&url)
+        .header("Accept", "application/vnd.github.v3+json")
+        .header("User-Agent", "oss-explorer")
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {:?}", e))?;
+
+    if !response.ok() {
+        return Ok(Vec::new()); // Return empty on error
+    }
+
+    response
+        .json::<Vec<Contributor>>()
+        .await
+        .map_err(|e| format!("Failed to parse response: {:?}", e))
+}
+
+async fn fetch_readme(owner: &str, repo: &str) -> Result<String, String> {
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/readme",
+        owner, repo
+    );
+
+    let response = reqwasm::http::Request::get(&url)
+        .header("Accept", "application/vnd.github.html+json")
+        .header("User-Agent", "oss-explorer")
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {:?}", e))?;
+
+    if !response.ok() {
+        return Err("README not found".to_string());
+    }
+
+    response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response: {:?}", e))
+}
+
 fn urlencoding(s: &str) -> String {
     let mut result = String::new();
     for c in s.chars() {
@@ -160,7 +267,6 @@ fn urlencoding(s: &str) -> String {
 }
 
 fn format_date(date_str: &str) -> String {
-    // Parse ISO 8601 date and return a more readable format
     if let Some(date_part) = date_str.split('T').next() {
         date_part.to_string()
     } else {
@@ -178,8 +284,30 @@ fn format_number(n: u32) -> String {
     }
 }
 
+fn format_size(kb: u32) -> String {
+    if kb >= 1_000_000 {
+        format!("{:.1} GB", kb as f64 / 1_000_000.0)
+    } else if kb >= 1_000 {
+        format!("{:.1} MB", kb as f64 / 1_000.0)
+    } else {
+        format!("{} KB", kb)
+    }
+}
+
 #[component]
 pub fn App() -> impl IntoView {
+    view! {
+        <Router>
+            <Routes fallback=|| "Page not found">
+                <Route path=path!("/") view=HomePage />
+                <Route path=path!("/repo/:owner/:name") view=RepoDetailPage />
+            </Routes>
+        </Router>
+    }
+}
+
+#[component]
+fn HomePage() -> impl IntoView {
     let (query, set_query) = signal(String::new());
     let (language, set_language) = signal("All".to_string());
     let (sort_by, set_sort_by) = signal(SortBy::Stars);
@@ -329,11 +457,13 @@ pub fn App() -> impl IntoView {
                                         <th>"Forks"</th>
                                         <th>"Issues"</th>
                                         <th>"Created"</th>
+                                        <th>"Actions"</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {move || repositories.get().into_iter().map(|repo| {
-                                        let repo_url = repo.html_url.clone();
+                                        let detail_url = format!("/repo/{}", repo.full_name);
+                                        let github_url = repo.html_url.clone();
                                         let repo_name = repo.full_name.clone();
                                         let description = repo.description.clone().unwrap_or_default();
                                         let language = repo.language.clone().unwrap_or_else(|| "Unknown".to_string());
@@ -349,9 +479,9 @@ pub fn App() -> impl IntoView {
                                                     <div class="repo-info">
                                                         <img src=avatar alt="avatar" class="avatar" />
                                                         <div class="repo-details">
-                                                            <a href=repo_url target="_blank" class="repo-name">
+                                                            <A href=detail_url.clone() class="repo-name">
                                                                 {repo_name}
-                                                            </a>
+                                                            </A>
                                                             <p class="repo-description">{description}</p>
                                                         </div>
                                                     </div>
@@ -361,6 +491,10 @@ pub fn App() -> impl IntoView {
                                                 <td class="stat">{forks}</td>
                                                 <td class="stat">{issues}</td>
                                                 <td class="date">{created}</td>
+                                                <td class="actions">
+                                                    <A href=detail_url class="action-btn view-btn">"View Details"</A>
+                                                    <a href=github_url target="_blank" class="action-btn github-btn">"GitHub"</a>
+                                                </td>
                                             </tr>
                                         }
                                     }).collect::<Vec<_>>()}
@@ -370,6 +504,209 @@ pub fn App() -> impl IntoView {
                     }
                 }}
             </div>
+
+            <footer>
+                <p>"Powered by the GitHub API | Built with Rust + Leptos"</p>
+            </footer>
+        </div>
+    }
+}
+
+#[component]
+fn RepoDetailPage() -> impl IntoView {
+    let params = use_params_map();
+    let owner = move || params.get().get("owner").unwrap_or_default();
+    let name = move || params.get().get("name").unwrap_or_default();
+
+    let (repo, set_repo) = signal(Option::<Repository>::None);
+    let (contributors, set_contributors) = signal(Vec::<Contributor>::new());
+    let (readme, set_readme) = signal(Option::<String>::None);
+    let (loading, set_loading) = signal(true);
+    let (error, set_error) = signal(Option::<String>::None);
+
+    // Fetch repo data when component loads
+    Effect::new(move |_| {
+        let o = owner();
+        let n = name();
+        if o.is_empty() || n.is_empty() {
+            return;
+        }
+
+        set_loading.set(true);
+        set_error.set(None);
+
+        let o_clone = o.clone();
+        let n_clone = n.clone();
+
+        leptos::task::spawn_local(async move {
+            // Fetch repository details
+            match fetch_repository(&o_clone, &n_clone).await {
+                Ok(r) => {
+                    set_repo.set(Some(r));
+                }
+                Err(e) => {
+                    set_error.set(Some(e));
+                    set_loading.set(false);
+                    return;
+                }
+            }
+
+            // Fetch contributors
+            if let Ok(c) = fetch_contributors(&o_clone, &n_clone).await {
+                set_contributors.set(c);
+            }
+
+            // Fetch README
+            if let Ok(r) = fetch_readme(&o_clone, &n_clone).await {
+                set_readme.set(Some(r));
+            }
+
+            set_loading.set(false);
+        });
+    });
+
+    view! {
+        <div class="app">
+            <header class="detail-header">
+                <A href="/" class="back-link">"< Back to Search"</A>
+                <h1>"Repository Details"</h1>
+            </header>
+
+            {move || error.get().map(|e| view! {
+                <div class="error">
+                    <strong>"Error: "</strong>{e}
+                </div>
+            })}
+
+            {move || {
+                if loading.get() {
+                    view! { <div class="loading">"Loading repository details..."</div> }.into_any()
+                } else if let Some(r) = repo.get() {
+                    let github_url = r.html_url.clone();
+                    let owner_url = r.owner.html_url.clone().unwrap_or_default();
+                    let topics = r.topics.clone().unwrap_or_default();
+                    let license_name = r.license.as_ref().map(|l| l.name.clone()).unwrap_or_else(|| "No license".to_string());
+                    let default_branch = r.default_branch.clone().unwrap_or_else(|| "main".to_string());
+
+                    view! {
+                        <div class="repo-detail">
+                            <div class="repo-header">
+                                <img src=r.owner.avatar_url.clone() alt="owner avatar" class="repo-avatar" />
+                                <div class="repo-header-info">
+                                    <h2 class="repo-title">{r.full_name.clone()}</h2>
+                                    <p class="repo-desc">{r.description.clone().unwrap_or_else(|| "No description".to_string())}</p>
+                                    <div class="repo-meta">
+                                        <a href=owner_url target="_blank" class="owner-link">
+                                            "@"{r.owner.login.clone()}
+                                        </a>
+                                        {r.fork.then(|| view! { <span class="badge fork-badge">"Fork"</span> })}
+                                        {r.archived.then(|| view! { <span class="badge archived-badge">"Archived"</span> })}
+                                    </div>
+                                </div>
+                                <a href=github_url target="_blank" class="github-link">"View on GitHub"</a>
+                            </div>
+
+                            <div class="stats-grid">
+                                <div class="stat-card">
+                                    <span class="stat-value">{format_number(r.stargazers_count)}</span>
+                                    <span class="stat-label">"Stars"</span>
+                                </div>
+                                <div class="stat-card">
+                                    <span class="stat-value">{format_number(r.forks_count)}</span>
+                                    <span class="stat-label">"Forks"</span>
+                                </div>
+                                <div class="stat-card">
+                                    <span class="stat-value">{format_number(r.open_issues_count)}</span>
+                                    <span class="stat-label">"Open Issues"</span>
+                                </div>
+                                <div class="stat-card">
+                                    <span class="stat-value">{format_number(r.watchers_count.unwrap_or(0))}</span>
+                                    <span class="stat-label">"Watchers"</span>
+                                </div>
+                            </div>
+
+                            <div class="detail-sections">
+                                <div class="detail-section">
+                                    <h3>"Information"</h3>
+                                    <div class="info-grid">
+                                        <div class="info-item">
+                                            <span class="info-label">"Language"</span>
+                                            <span class="info-value">{r.language.clone().unwrap_or_else(|| "Unknown".to_string())}</span>
+                                        </div>
+                                        <div class="info-item">
+                                            <span class="info-label">"License"</span>
+                                            <span class="info-value">{license_name}</span>
+                                        </div>
+                                        <div class="info-item">
+                                            <span class="info-label">"Default Branch"</span>
+                                            <span class="info-value">{default_branch}</span>
+                                        </div>
+                                        <div class="info-item">
+                                            <span class="info-label">"Size"</span>
+                                            <span class="info-value">{format_size(r.size.unwrap_or(0))}</span>
+                                        </div>
+                                        <div class="info-item">
+                                            <span class="info-label">"Created"</span>
+                                            <span class="info-value">{format_date(&r.created_at)}</span>
+                                        </div>
+                                        <div class="info-item">
+                                            <span class="info-label">"Last Updated"</span>
+                                            <span class="info-value">{format_date(&r.updated_at)}</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {(!topics.is_empty()).then(|| {
+                                    let topics_clone = topics.clone();
+                                    view! {
+                                        <div class="detail-section">
+                                            <h3>"Topics"</h3>
+                                            <div class="topics-list">
+                                                {topics_clone.into_iter().map(|topic| {
+                                                    view! { <span class="topic-badge">{topic}</span> }
+                                                }).collect::<Vec<_>>()}
+                                            </div>
+                                        </div>
+                                    }
+                                })}
+
+                                {move || {
+                                    let contribs = contributors.get();
+                                    (!contribs.is_empty()).then(|| {
+                                        view! {
+                                            <div class="detail-section">
+                                                <h3>"Top Contributors"</h3>
+                                                <div class="contributors-list">
+                                                    {contribs.into_iter().map(|c| {
+                                                        view! {
+                                                            <a href=c.html_url.clone() target="_blank" class="contributor">
+                                                                <img src=c.avatar_url.clone() alt=c.login.clone() class="contributor-avatar" />
+                                                                <span class="contributor-name">{c.login.clone()}</span>
+                                                                <span class="contributor-commits">{c.contributions}" commits"</span>
+                                                            </a>
+                                                        }
+                                                    }).collect::<Vec<_>>()}
+                                                </div>
+                                            </div>
+                                        }
+                                    })
+                                }}
+
+                                {move || readme.get().map(|content| {
+                                    view! {
+                                        <div class="detail-section readme-section">
+                                            <h3>"README"</h3>
+                                            <div class="readme-content" inner_html=content></div>
+                                        </div>
+                                    }
+                                })}
+                            </div>
+                        </div>
+                    }.into_any()
+                } else {
+                    view! { <div class="empty">"Repository not found."</div> }.into_any()
+                }
+            }}
 
             <footer>
                 <p>"Powered by the GitHub API | Built with Rust + Leptos"</p>
