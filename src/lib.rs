@@ -273,6 +273,27 @@ fn format_number(n: u32) -> String {
     }
 }
 
+// Default avatar as a data URI (simple gray circle with user icon)
+const DEFAULT_AVATAR: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%2330363d'/%3E%3Ccircle cx='20' cy='16' r='7' fill='%238b949e'/%3E%3Cpath d='M6 36c0-8 6-14 14-14s14 6 14 14' fill='%238b949e'/%3E%3C/svg%3E";
+
+/// Validates that a URL is safe to use (not a browser extension URL or other problematic scheme)
+fn is_safe_image_url(url: &str) -> bool {
+    let url_lower = url.to_lowercase();
+    // Allow https, http, and data URIs only
+    url_lower.starts_with("https://")
+        || url_lower.starts_with("http://")
+        || url_lower.starts_with("data:")
+}
+
+/// Returns a safe avatar URL, falling back to default if the URL is invalid
+fn get_safe_avatar_url(url: &str) -> String {
+    if is_safe_image_url(url) {
+        url.to_string()
+    } else {
+        DEFAULT_AVATAR.to_string()
+    }
+}
+
 #[component]
 pub fn App() -> impl IntoView {
     let (query, set_query) = signal(String::new());
@@ -527,7 +548,20 @@ pub fn App() -> impl IntoView {
                                             <tr class:archived=is_archived class:forked=is_fork>
                                                 <td class="repo-cell">
                                                     <div class="repo-info">
-                                                        <img src=avatar alt="avatar" class="avatar" />
+                                                        <img
+                                                            src=avatar
+                                                            alt="avatar"
+                                                            class="avatar"
+                                                            on:error=move |ev| {
+                                                                // Replace with default avatar on load error
+                                                                if let Some(target) = ev.target() {
+                                                                    use wasm_bindgen::JsCast;
+                                                                    if let Ok(img) = target.dyn_into::<web_sys::HtmlImageElement>() {
+                                                                        img.set_src(&fallback_avatar);
+                                                                    }
+                                                                }
+                                                            }
+                                                        />
                                                         <div class="repo-details">
                                                             <div class="repo-name-row">
                                                                 <a href=repo_url target="_blank" class="repo-name">
