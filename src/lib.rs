@@ -170,7 +170,7 @@ fn build_search_query(filters: &SearchFilters) -> String {
     let mut parts = Vec::new();
 
     // Add user query or default
-    if filters.query.is_empty() {
+    if filters.query.is_empty() && filters.min_stars.is_empty() {
         parts.push("stars:>100".to_string());
     } else {
         parts.push(filters.query.clone());
