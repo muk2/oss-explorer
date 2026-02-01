@@ -242,6 +242,56 @@ tr.forked .repo-name {
     color: var(--error-color);
 }
 
+.warning {
+    background: rgba(210, 153, 34, 0.1);
+    border: 1px solid var(--warning-color);
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 20px;
+    color: var(--warning-color);
+}
+
+.rate-limit-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 15px;
+    margin-bottom: 15px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+}
+
+.rate-limit-ok {
+    background: rgba(63, 185, 80, 0.1);
+    border: 1px solid var(--success-color);
+    color: var(--success-color);
+}
+
+.rate-limit-warning {
+    background: rgba(210, 153, 34, 0.1);
+    border: 1px solid var(--warning-color);
+    color: var(--warning-color);
+}
+
+.rate-limit-danger {
+    background: rgba(248, 81, 73, 0.1);
+    border: 1px solid var(--error-color);
+    color: var(--error-color);
+}
+
+.rate-limit-label {
+    font-weight: 500;
+}
+
+.rate-limit-value {
+    font-weight: 600;
+}
+
+.rate-limit-reset {
+    font-size: 0.8rem;
+    opacity: 0.8;
+}
+
 .results-header {
     display: flex;
     justify-content: space-between;
@@ -253,6 +303,12 @@ tr.forked .repo-name {
 .count {
     color: var(--text-secondary);
     font-size: 0.95rem;
+}
+
+.page-info {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    font-weight: 500;
 }
 
 .results {
@@ -407,6 +463,81 @@ footer {
     }
 }
 
+.pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    margin-top: 20px;
+    padding: 20px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+}
+
+.page-btn {
+    padding: 8px 16px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.page-btn:hover:not(:disabled) {
+    background: var(--bg-primary);
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+.page-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.page-numbers {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.page-num {
+    min-width: 36px;
+    height: 36px;
+    padding: 0 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.page-num:hover:not(:disabled) {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+.page-num.active {
+    background: var(--accent-color);
+    border-color: var(--accent-color);
+    color: var(--bg-primary);
+}
+
+.page-num:disabled {
+    cursor: not-allowed;
+}
+
+.ellipsis {
+    color: var(--text-secondary);
+    padding: 0 4px;
+}
+
 @media (max-width: 600px) {
     header h1 {
         font-size: 1.8rem;
@@ -418,5 +549,16 @@ footer {
 
     .search-box button {
         width: 100%;
+    }
+
+    .pagination {
+        flex-wrap: wrap;
+    }
+
+    .page-numbers {
+        order: 3;
+        width: 100%;
+        justify-content: center;
+        margin-top: 10px;
     }
 }
