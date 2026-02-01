@@ -540,7 +540,8 @@ pub fn App() -> impl IntoView {
                                         let forks = format_number(repo.forks_count);
                                         let issues = format_number(repo.open_issues_count);
                                         let created = format_date(&repo.created_at);
-                                        let avatar = repo.owner.avatar_url.clone();
+                                        let avatar = get_safe_avatar_url(&repo.owner.avatar_url);
+                                        let fallback_avatar = DEFAULT_AVATAR.to_string();
                                         let is_fork = repo.fork;
                                         let is_archived = repo.archived;
 
