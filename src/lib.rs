@@ -16,6 +16,11 @@ pub struct Repository {
     pub created_at: String,
     pub updated_at: String,
     pub owner: Owner,
+    #[serde(default)]
+    pub fork: bool,
+    #[serde(default)]
+    pub archived: bool,
+    pub topics: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -83,6 +88,31 @@ impl SortOrder {
 // Results per page options
 pub const PER_PAGE_OPTIONS: &[u32] = &[10, 30, 50, 100];
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ForkFilter {
+    All,
+    OriginalOnly,
+    ForksOnly,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ArchivedFilter {
+    All,
+    ActiveOnly,
+    ArchivedOnly,
+}
+
+// Star range presets for the filter
+pub const STAR_RANGES: &[(&str, &str)] = &[
+    ("Any", ""),
+    ("1+", ">=1"),
+    ("10+", ">=10"),
+    ("100+", ">=100"),
+    ("1K+", ">=1000"),
+    ("10K+", ">=10000"),
+    ("100K+", ">=100000"),
+];
+
 // Popular programming languages for the filter
 pub const LANGUAGES: &[&str] = &[
     "All",
@@ -110,33 +140,97 @@ pub const LANGUAGES: &[&str] = &[
     "Zig",
     "Nim",
     "OCaml",
+    "Shell",
+    "Vue",
+    "HTML",
+    "CSS",
+    "Markdown",
 ];
 
-async fn search_repositories(
-    query: String,
-    language: String,
-    sort_by: SortBy,
-    sort_order: SortOrder,
-    page: u32,
-    per_page: u32,
-) -> Result<SearchResult, String> {
-    let mut search_query = if query.is_empty() {
-        "stars:>100".to_string()
-    } else {
-        query
-    };
+#[derive(Clone, Debug, Default)]
+pub struct SearchFilters {
+    pub query: String,
+    pub language: String,
+    pub min_stars: String,
+    pub fork_filter: ForkFilter,
+    pub archived_filter: ArchivedFilter,
+    pub sort_by: SortBy,
+    pub sort_order: SortOrder,
+    pub page: u32,
+    pub per_page: u32,
+}
 
-    if language != "All" && !language.is_empty() {
-        search_query = format!("{} language:{}", search_query, language);
+impl Default for ForkFilter {
+    fn default() -> Self {
+        ForkFilter::All
     }
+}
+
+impl Default for ArchivedFilter {
+    fn default() -> Self {
+        ArchivedFilter::ActiveOnly
+    }
+}
+
+impl Default for SortBy {
+    fn default() -> Self {
+        SortBy::Stars
+    }
+}
+
+impl Default for SortOrder {
+    fn default() -> Self {
+        SortOrder::Desc
+    }
+}
+
+fn build_search_query(filters: &SearchFilters) -> String {
+    let mut parts = Vec::new();
+
+    // Add user query or default
+    if filters.query.is_empty() && filters.min_stars.is_empty() {
+        parts.push("stars:>100".to_string());
+    } else if !filters.query.is_empty() {
+        parts.push(filters.query.clone());
+    }
+
+    // Add language filter
+    if filters.language != "All" && !filters.language.is_empty() {
+        parts.push(format!("language:{}", filters.language));
+    }
+
+    // Add star filter
+    if !filters.min_stars.is_empty() {
+        parts.push(format!("stars:{}", filters.min_stars));
+    }
+
+    // Add fork filter
+    match filters.fork_filter {
+        ForkFilter::All => {}
+        ForkFilter::OriginalOnly => parts.push("fork:false".to_string()),
+        ForkFilter::ForksOnly => parts.push("fork:true".to_string()),
+    }
+
+    // Add archived filter
+    match filters.archived_filter {
+        ArchivedFilter::All => {}
+        ArchivedFilter::ActiveOnly => parts.push("archived:false".to_string()),
+        ArchivedFilter::ArchivedOnly => parts.push("archived:true".to_string()),
+    }
+
+    parts.join(" ")
+}
+
+async fn search_repositories(filters: SearchFilters) -> Result<SearchResult, String> {
+    let search_query = build_search_query(&filters);
 
     let url = format!(
         "https://api.github.com/search/repositories?q={}&sort={}&order={}&per_page={}&page={}",
         urlencoding(&search_query),
-        sort_by.as_str(),
-        sort_order.as_str(),
-        per_page,
-        page
+        filters.sort_by.as_str(),
+        filters.sort_order.as_str(),
+        filters.per_page,
+        filters.page
     );
 
     let response = reqwasm::http::Request::get(&url)
@@ -228,6 +322,7 @@ fn urlencoding(s: &str) -> String {
             ':' => result.push_str("%3A"),
             '>' => result.push_str("%3E"),
             '<' => result.push_str("%3C"),
+            '=' => result.push_str("%3D"),
             _ => {
                 for byte in c.to_string().as_bytes() {
                     result.push_str(&format!("%{:02X}", byte));
@@ -263,10 +358,34 @@ fn calculate_total_pages(total_count: u32, per_page: u32) -> u32 {
     (effective_total + per_page - 1) / per_page
 }
 
+// Default avatar as a data URI (simple gray circle with user icon)
+const DEFAULT_AVATAR: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%2330363d'/%3E%3Ccircle cx='20' cy='16' r='7' fill='%238b949e'/%3E%3Cpath d='M6 36c0-8 6-14 14-14s14 6 14 14' fill='%238b949e'/%3E%3C/svg%3E";
+
+/// Validates that a URL is safe to use (not a browser extension URL or other problematic scheme)
+fn is_safe_image_url(url: &str) -> bool {
+    let url_lower = url.to_lowercase();
+    // Allow https, http, and data URIs only
+    url_lower.starts_with("https://")
+        || url_lower.starts_with("http://")
+        || url_lower.starts_with("data:")
+}
+
+/// Returns a safe avatar URL, falling back to default if the URL is invalid
+fn get_safe_avatar_url(url: &str) -> String {
+    if is_safe_image_url(url) {
+        url.to_string()
+    } else {
+        DEFAULT_AVATAR.to_string()
+    }
+}
+
 #[component]
 pub fn App() -> impl IntoView {
     let (query, set_query) = signal(String::new());
     let (language, set_language) = signal("All".to_string());
+    let (min_stars, set_min_stars) = signal(String::new());
+    let (fork_filter, set_fork_filter) = signal(ForkFilter::All);
+    let (archived_filter, set_archived_filter) = signal(ArchivedFilter::ActiveOnly);
     let (sort_by, set_sort_by) = signal(SortBy::Stars);
     let (sort_order, set_sort_order) = signal(SortOrder::Desc);
     let (repositories, set_repositories) = signal(Vec::<Repository>::new());
@@ -277,22 +396,29 @@ pub fn App() -> impl IntoView {
     let (per_page, set_per_page) = signal(30u32);
     let (rate_limit, set_rate_limit) = signal(Option::<RateLimitInfo>::None);
     let (incomplete_results, set_incomplete_results) = signal(false);
+    let (show_advanced, set_show_advanced) = signal(false);
 
     let total_pages = move || calculate_total_pages(total_count.get(), per_page.get());
 
     let do_search = move |page: u32| {
-        let q = query.get();
-        let lang = language.get();
-        let sort = sort_by.get();
-        let order = sort_order.get();
-        let pp = per_page.get();
+        let filters = SearchFilters {
+            query: query.get(),
+            language: language.get(),
+            min_stars: min_stars.get(),
+            fork_filter: fork_filter.get(),
+            archived_filter: archived_filter.get(),
+            sort_by: sort_by.get(),
+            sort_order: sort_order.get(),
+            page,
+            per_page: per_page.get(),
+        };
 
         set_loading.set(true);
         set_error.set(None);
         set_current_page.set(page);
 
         leptos::task::spawn_local(async move {
-            match search_repositories(q, lang, sort, order, page, pp).await {
+            match search_repositories(filters).await {
                 Ok(result) => {
                     set_total_count.set(result.response.total_count);
                     set_repositories.set(result.response.items);
@@ -333,6 +459,17 @@ pub fn App() -> impl IntoView {
 
     let go_last = move |_| {
         go_to_page(total_pages());
+    };
+
+    let clear_filters = move |_| {
+        set_query.set(String::new());
+        set_language.set("All".to_string());
+        set_min_stars.set(String::new());
+        set_fork_filter.set(ForkFilter::All);
+        set_archived_filter.set(ArchivedFilter::ActiveOnly);
+        set_sort_by.set(SortBy::Stars);
+        set_sort_order.set(SortOrder::Desc);
+        do_search(1);
     };
 
     // Initial search on load
@@ -381,6 +518,22 @@ pub fn App() -> impl IntoView {
                                 view! {
                                     <option value=*lang selected=move || language.get() == *lang>
                                         {*lang}
+                                    </option>
+                                }
+                            }).collect::<Vec<_>>()}
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
+                        <label>"Min Stars:"</label>
+                        <select on:change=move |ev| {
+                            set_min_stars.set(event_target_value(&ev));
+                            do_search(1);
+                        }>
+                            {STAR_RANGES.iter().map(|(label, value)| {
+                                view! {
+                                    <option value=*value selected=move || min_stars.get() == *value>
+                                        {*label}
                                     </option>
                                 }
                             }).collect::<Vec<_>>()}
@@ -438,6 +591,53 @@ pub fn App() -> impl IntoView {
                         </select>
                     </div>
                 </div>
+
+                <div class="advanced-toggle">
+                    <button class="toggle-btn" on:click=move |_| set_show_advanced.update(|v| *v = !*v)>
+                        {move || if show_advanced.get() { "Hide Advanced Filters" } else { "Show Advanced Filters" }}
+                    </button>
+                    <button class="clear-btn" on:click=clear_filters>
+                        "Clear All Filters"
+                    </button>
+                </div>
+
+                {move || show_advanced.get().then(|| view! {
+                    <div class="advanced-filters">
+                        <div class="filter-group">
+                            <label>"Repository Type:"</label>
+                            <select on:change=move |ev| {
+                                let value = event_target_value(&ev);
+                                set_fork_filter.set(match value.as_str() {
+                                    "original" => ForkFilter::OriginalOnly,
+                                    "forks" => ForkFilter::ForksOnly,
+                                    _ => ForkFilter::All,
+                                });
+                                do_search(1);
+                            }>
+                                <option value="all" selected=move || fork_filter.get() == ForkFilter::All>"All Repos"</option>
+                                <option value="original" selected=move || fork_filter.get() == ForkFilter::OriginalOnly>"Original Only"</option>
+                                <option value="forks" selected=move || fork_filter.get() == ForkFilter::ForksOnly>"Forks Only"</option>
+                            </select>
+                        </div>
+
+                        <div class="filter-group">
+                            <label>"Status:"</label>
+                            <select on:change=move |ev| {
+                                let value = event_target_value(&ev);
+                                set_archived_filter.set(match value.as_str() {
+                                    "active" => ArchivedFilter::ActiveOnly,
+                                    "archived" => ArchivedFilter::ArchivedOnly,
+                                    _ => ArchivedFilter::All,
+                                });
+                                do_search(1);
+                            }>
+                                <option value="active" selected=move || archived_filter.get() == ArchivedFilter::ActiveOnly>"Active Only"</option>
+                                <option value="all" selected=move || archived_filter.get() == ArchivedFilter::All>"All (incl. Archived)"</option>
+                                <option value="archived" selected=move || archived_filter.get() == ArchivedFilter::ArchivedOnly>"Archived Only"</option>
+                            </select>
+                        </div>
+                    </div>
+                })}
             </div>
 
             // Rate limit indicator
@@ -477,7 +677,6 @@ pub fn App() -> impl IntoView {
                 <span class="count">
                     {move || {
                         let total = total_count.get();
-                        let effective_total = total.min(1000);
                         if total > 1000 {
                             format!("{} repositories found (showing first 1,000)", format_number(total))
                         } else {
@@ -519,17 +718,37 @@ pub fn App() -> impl IntoView {
                                         let forks = format_number(repo.forks_count);
                                         let issues = format_number(repo.open_issues_count);
                                         let created = format_date(&repo.created_at);
-                                        let avatar = repo.owner.avatar_url.clone();
+                                        let avatar = get_safe_avatar_url(&repo.owner.avatar_url);
+                                        let fallback_avatar = DEFAULT_AVATAR.to_string();
+                                        let is_fork = repo.fork;
+                                        let is_archived = repo.archived;
 
                                         view! {
-                                            <tr>
+                                            <tr class:archived=is_archived class:forked=is_fork>
                                                 <td class="repo-cell">
                                                     <div class="repo-info">
-                                                        <img src=avatar alt="avatar" class="avatar" />
+                                                        <img
+                                                            src=avatar
+                                                            alt="avatar"
+                                                            class="avatar"
+                                                            on:error=move |ev| {
+                                                                // Replace with default avatar on load error
+                                                                if let Some(target) = ev.target() {
+                                                                    use wasm_bindgen::JsCast;
+                                                                    if let Ok(img) = target.dyn_into::<web_sys::HtmlImageElement>() {
+                                                                        img.set_src(&fallback_avatar);
+                                                                    }
+                                                                }
+                                                            }
+                                                        />
                                                         <div class="repo-details">
-                                                            <a href=repo_url target="_blank" class="repo-name">
-                                                                {repo_name}
-                                                            </a>
+                                                            <div class="repo-name-row">
+                                                                <a href=repo_url target="_blank" class="repo-name">
+                                                                    {repo_name}
+                                                                </a>
+                                                                {is_fork.then(|| view! { <span class="badge fork-badge">"Fork"</span> })}
+                                                                {is_archived.then(|| view! { <span class="badge archived-badge">"Archived"</span> })}
+                                                            </div>
                                                             <p class="repo-description">{description}</p>
                                                         </div>
                                                     </div>

@@ -5,8 +5,64 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OSS Explorer - Discover Open Source Software</title>
     <link data-trunk rel="css" href="style.css">
+    <style>
+        /* Initial loading state before WASM loads */
+        .wasm-loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background-color: #0d1117;
+            color: #f0f6fc;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+        }
+        .wasm-loading h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, #58a6ff, #a371f7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 20px;
+        }
+        .wasm-loading .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #30363d;
+            border-top-color: #58a6ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
 </head>
 <body>
+    <!-- Loading state shown while WASM initializes -->
+    <div class="wasm-loading" id="wasm-loader">
+        <h1>OSS Explorer</h1>
+        <div class="spinner"></div>
+        <p style="margin-top: 20px; color: #8b949e;">Loading application...</p>
+    </div>
+    <script>
+        // Remove loader once WASM app mounts
+        const observer = new MutationObserver((mutations) => {
+            const loader = document.getElementById('wasm-loader');
+            const app = document.querySelector('.app');
+            if (app && loader) {
+                loader.remove();
+                observer.disconnect();
+            }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+
+        // Fallback: remove loader after 10 seconds regardless
+        setTimeout(() => {
+            const loader = document.getElementById('wasm-loader');
+            if (loader) loader.remove();
+        }, 10000);
+    </script>
     <link data-trunk rel="rust" data-bin="oss-explorer" data-wasm-opt="z" />
 </body>
 </html>
